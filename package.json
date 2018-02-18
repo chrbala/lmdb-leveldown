@@ -1,6 +1,6 @@
 {
   "name": "lmdb-leveldown",
-  "version": "0.0.1",
+  "version": "0.0.2",
   "description": "leveldown compatible binding to LMDB",
   "main": "build/index.js",
   "author": "Chris Bala",
