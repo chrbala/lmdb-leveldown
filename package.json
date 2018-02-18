@@ -2,6 +2,7 @@
   "name": "lmdb-leveldown",
   "version": "0.0.1",
   "description": "leveldown compatible binding to LMDB",
+  "main": "build/index.js",
   "author": "Chris Bala",
   "license": "MIT",
   "keywords": [
@@ -19,5 +20,32 @@
     "type": "git",
     "url": "https://github.com/chrbala/lmdb-leveldown.git"
   },
-  "homepage": "https://github.com/chrbala/lmdb-leveldown"
+  "homepage": "https://github.com/chrbala/lmdb-leveldown",
+  "scripts": {
+    "build": "rollup -c",
+    "test": "babel-tape-runner src/**/*-test.js",
+    "typecheck": "flow",
+    "lint": "eslint src",
+    "prettify": "prettier-eslint --write '{,!(node_modules|build|flow-typed)/**/}*.js'",
+    "validate": "npm run lint && npm run typecheck && npm run test",
+    "prepublishOnly": "npm run validate && npm run build"
+  },
+  "dependencies": {
+    "abstract-leveldown": "^4.0.2",
+    "mkdirp": "^0.5.1",
+    "node-lmdb": "^0.4.13"
+  },
+  "devDependencies": {
+    "babel-plugin-transform-flow-strip-types": "^6.22.0",
+    "babel-preset-env": "^1.6.1",
+    "babel-preset-stage-2": "^6.24.1",
+    "babel-tape-runner": "^2.0.1",
+    "chrbala-linter": "^2.2.1",
+    "chrbala-rollup": "0.0.2",
+    "eslint": "^4.18.0",
+    "flow-bin": "^0.66.0",
+    "prettier-eslint-cli": "^4.7.1",
+    "rollup": "^0.50.0",
+    "tape": "^4.5.1"
+  }
 }

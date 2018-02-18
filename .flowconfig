@@ -1,0 +1,9 @@
+[ignore]
+
+[include]
+
+[libs]
+
+[options]
+esproposal.export_star_as=enable
+suppress_comment= \\(.\\|\n\\)*\\$FlowFixMe
