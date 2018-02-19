@@ -140,43 +140,43 @@ type GoToArgType = {
 	txn: TransactionType,
 	dbi: DbiType,
 };
-const goTo = ({ key, cursor, txn, dbi }: GoToArgType) => {
-	const init = () => {
+const goTo = ({ cursor, txn, dbi }: GoToArgType) => {
+	const init = key => {
 		txn.putBoolean(dbi, key, true);
 		cursor.goToKey(key);
 	};
 
-	const gt = () => {
+	const gt = key => {
 		const curr = cursor.goToKey(key);
 		if (!curr) {
-			init();
+			init(key);
 			return cursor.goToNext();
 		}
 
 		return cursor.goToNext();
 	};
-	const gte = () => {
+	const gte = key => {
 		const curr = cursor.goToKey(key);
 		if (!curr) {
-			init();
+			init(key);
 			return cursor.goToNext();
 		}
 
 		return curr;
 	};
-	const lt = () => {
+	const lt = key => {
 		const curr = cursor.goToKey(key);
 		if (!curr) {
-			init();
+			init(key);
 			return cursor.goToPrev();
 		}
 
 		return cursor.goToPrev();
 	};
-	const lte = () => {
+	const lte = key => {
 		const curr = cursor.goToKey(key);
 		if (!curr) {
-			init();
+			init(key);
 			return cursor.goToPrev();
 		}
 
@@ -199,7 +199,7 @@ const getInitialCurrentValue = (
 	{ gt, gte, lt, lte, reverse }: IteratorOptionsType,
 	{ cursor, txn, dbi }: GetInitialCurrentValueContextType
 ) => {
-	const boundGoto = key => goTo({ key, cursor, txn, dbi });
+	const boundGoto = goTo({ cursor, txn, dbi });
 	const invalid = (a: string, b: string) =>
 		`${a} can not be provided with ${b}`;
 
@@ -208,18 +208,16 @@ const getInitialCurrentValue = (
 
 	return gt
 		? reverse
-			? lt ? boundGoto(lt).lt() : lte ? boundGoto(lte).lte() : cursor.goToLast()
-			: boundGoto(gt).gt()
+			? lt ? boundGoto.lt(lt) : lte ? boundGoto.lte(lte) : cursor.goToLast()
+			: boundGoto.gt(gt)
 		: gte
 			? reverse
-				? lt
-					? boundGoto(lt).lt()
-					: lte ? boundGoto(lte).lte() : cursor.goToLast()
-				: boundGoto(gte).gte()
+				? lt ? boundGoto.lt(lt) : lte ? boundGoto.lte(lte) : cursor.goToLast()
+				: boundGoto.gte(gte)
 			: lt
-				? reverse ? boundGoto(lt).lt() : cursor.goToFirst()
+				? reverse ? boundGoto.lt(lt) : cursor.goToFirst()
 				: lte
-					? reverse ? boundGoto(lte).lte() : cursor.goToFirst()
+					? reverse ? boundGoto.lte(lte) : cursor.goToFirst()
 					: reverse ? cursor.goToLast() : cursor.goToFirst();
 };
 
