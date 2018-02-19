@@ -68,41 +68,32 @@ type PutArgType = {
 	callback: CallbackType,
 };
 const commit = ({ env, dbi, ops, callback }: PutArgType) => {
-	let _txn: ?TransactionType;
-	try {
-		const txn = (_txn = env.beginTxn());
-		ops.forEach(op => {
-			if (op.type === PUT) {
-				const { key, value } = op;
-				const putValue =
-					typeof value === 'string'
-						? txn.putString
-						: typeof value === 'number'
-							? txn.putNumber
-							: typeof value === 'boolean'
-								? txn.putBoolean
-								: // eslint-disable-next-line max-params
-								function(d, k, _, options) {
-									this.putBinary(d, k, serialize(value), options);
-								};
-				putValue.call(txn, dbi, key, value, {
-					keyIsBuffer: Buffer.isBuffer(key),
-				});
-			} else if (op.type === DELETE) {
-				const { key } = op;
-				if (txn.getBinary(dbi, key) !== null)
-					txn.del(dbi, key, { keyIsBuffer: Buffer.isBuffer(key) });
-			}
-		});
-		txn.commit();
-		env.sync(e => (e ? callback(new Error(e)) : callback()));
-	} catch (e) {
-		if (_txn)
-			try {
-				_txn.abort();
-			} catch (error) {}
-		process.nextTick(() => callback(new Error(e)));
-	}
+	const txn = env.beginTxn();
+	ops.forEach(op => {
+		if (op.type === PUT) {
+			const { key, value } = op;
+			const putValue =
+				typeof value === 'string'
+					? txn.putString
+					: typeof value === 'number'
+						? txn.putNumber
+						: typeof value === 'boolean'
+							? txn.putBoolean
+							: // eslint-disable-next-line max-params
+							function(d, k, _, options) {
+								this.putBinary(d, k, serialize(value), options);
+							};
+			putValue.call(txn, dbi, key, value, {
+				keyIsBuffer: Buffer.isBuffer(key),
+			});
+		} else if (op.type === DELETE) {
+			const { key } = op;
+			if (txn.getBinary(dbi, key) !== null)
+				txn.del(dbi, key, { keyIsBuffer: Buffer.isBuffer(key) });
+		}
+	});
+	txn.commit();
+	env.sync(e => (e ? callback(new Error(e)) : callback()));
 };
 
 class Batch extends AbstractChainedBatch {
@@ -307,49 +298,34 @@ class Iterator extends AbstractIterator {
 			options,
 			options: { reverse, keyAsBuffer, valueAsBuffer },
 		} = this;
-		try {
-			const { count } = this;
-			if (curr) {
-				const { key, value } = await new Promise((resolve, reject) => {
-					try {
-						cursor.getCurrentBinary((k, v) => resolve({ key: k, value: v }));
-					} catch (e) {
-						reject(new Error(e));
-					}
+		const { count } = this;
+		if (curr) {
+			const { key, value } = await new Promise((resolve, reject) => {
+				cursor.getCurrentBinary((k, v) => resolve({ key: k, value: v }));
+			});
+
+			this.curr = reverse ? cursor.goToPrev() : cursor.goToNext();
+
+			const wrapKey = k => (keyAsBuffer ? Buffer.from(k) : k);
+			const wrapValue = v => (valueAsBuffer ? Buffer.from(v) : v);
+			if (hasMore({ options, key: deserialize(key), count }))
+				process.nextTick(() => {
+					this.count++;
+					callback(
+						null,
+						wrapKey(deserialize(key)),
+						wrapValue(deserialize(value))
+					);
 				});
-
-				this.curr = reverse ? cursor.goToPrev() : cursor.goToNext();
-
-				const wrapKey = k => (keyAsBuffer ? Buffer.from(k) : k);
-				const wrapValue = v => (valueAsBuffer ? Buffer.from(v) : v);
-				if (hasMore({ options, key: deserialize(key), count }))
-					process.nextTick(() => {
-						this.count++;
-						callback(
-							null,
-							wrapKey(deserialize(key)),
-							wrapValue(deserialize(value))
-						);
-					});
-				else process.nextTick(callback);
-			} else process.nextTick(callback);
-		} catch (e) {
-			process.nextTick(() => callback(new Error(e)));
-		}
+			else process.nextTick(callback);
+		} else process.nextTick(callback);
 	}
 
 	_end(callback: CallbackType) {
 		const { txn, env, cursor } = this;
-		try {
-			cursor.close();
-			txn.abort();
-			env.sync(e => (e ? callback(new Error(e)) : callback()));
-		} catch (e) {
-			try {
-				txn.abort();
-			} catch (error) {}
-			process.nextTick(() => callback(new Error(e)));
-		}
+		cursor.close();
+		txn.abort();
+		env.sync(e => (e ? callback(new Error(e)) : callback()));
 	}
 }
 
@@ -373,57 +349,50 @@ class LevelDOWN extends AbstractLevelDOWN {
 		}: OptionsType,
 		callback: CallbackType
 	) {
-		try {
-			const { path } = this;
+		const { path } = this;
+		const invalid = message =>
+			process.nextTick(() => callback(new Error(message)));
 
-			if (overrides.dbi && !overrides.env)
-				throw new Error('env must be supplied with dbi');
+		if (overrides.dbi && !overrides.env)
+			return invalid('env must be supplied with dbi');
 
-			if (errorIfExists && existsSync(path))
-				throw new Error('File already exists');
+		if (errorIfExists && existsSync(path))
+			return invalid('File already exists');
 
-			if (createIfMissing !== false) mkdirp.sync(path);
+		if (createIfMissing !== false) mkdirp.sync(path);
+		else if (!existsSync(path))
+			return invalid('file or directory does not exist');
 
-			const env = (this.env =
-				overrides.env ||
-				(() => {
-					const _env = new Env();
+		const env = (this.env =
+			overrides.env ||
+			(() => {
+				const _env = new Env();
 
-					_env.open({
-						mapSize: mapSize !== undefined ? mapSize : 2 * 1024 * 1024 * 1024,
-						maxDbs: 1,
-						path,
-					});
-
-					return _env;
-				})());
-
-			this.dbi =
-				env.dbi ||
-				env.openDbi({
-					name: dbiName,
-					create: createIfMissing !== false,
-					noMetaSync: true,
-					noSync: true,
+				_env.open({
+					mapSize: mapSize !== undefined ? mapSize : 2 * 1024 * 1024 * 1024,
+					maxDbs: 1,
+					path,
 				});
-			process.nextTick(callback);
-		} catch (e) {
-			const error = e.message.match(/(file|directory)/)
-				? Object.assign(e, { message: 'file or directory does not exist' })
-				: e;
-			process.nextTick(() => callback(new Error(error)));
-		}
+
+				return _env;
+			})());
+
+		this.dbi =
+			env.dbi ||
+			env.openDbi({
+				name: dbiName,
+				create: createIfMissing !== false,
+				noMetaSync: true,
+				noSync: true,
+			});
+		process.nextTick(callback);
 	}
 
 	_close(callback: CallbackType) {
-		try {
-			const { env, dbi } = this;
-			dbi.close();
-			env.close();
-			process.nextTick(callback);
-		} catch (e) {
-			process.nextTick(() => callback(new Error(e)));
-		}
+		const { env, dbi } = this;
+		dbi.close();
+		env.close();
+		process.nextTick(callback);
 	}
 
 	// eslint-disable-next-line max-params
@@ -446,27 +415,23 @@ class LevelDOWN extends AbstractLevelDOWN {
 	_get(key: KeyType, { asBuffer }: OptionsType, callback: CallbackType) {
 		const { env, dbi } = this;
 		const txn: TransactionType = env.beginTxn();
-		try {
-			const maybeBuffer = txn.getBinary(dbi, key, {
-				keyIsBuffer: Buffer.isBuffer(key),
-			});
+		const maybeBuffer = txn.getBinary(dbi, key, {
+			keyIsBuffer: Buffer.isBuffer(key),
+		});
 
-			if (maybeBuffer === null) throw new Error('NotFound');
-			const buffer = maybeBuffer === undefined ? serialize('') : maybeBuffer;
-
-			const data = deserialize(buffer);
-			txn.commit();
-			env.sync(e => {
-				if (e) callback(new Error(e));
-				else callback(null, asBuffer ? Buffer.from(data) : data);
-			});
-		} catch (e) {
-			if (txn)
-				try {
-					txn.abort();
-				} catch (error) {}
-			process.nextTick(() => callback(new Error(e)));
+		if (maybeBuffer === null) {
+			txn.abort();
+			return process.nextTick(() => callback(new Error('NotFound')));
 		}
+
+		const buffer = maybeBuffer === undefined ? serialize('') : maybeBuffer;
+
+		const data = deserialize(buffer);
+		txn.commit();
+		env.sync(e => {
+			if (e) callback(new Error(e));
+			else callback(null, asBuffer ? Buffer.from(data) : data);
+		});
 	}
 
 	_del(key: KeyType, options: OptionsType, callback: CallbackType) {
