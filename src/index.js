@@ -134,51 +134,31 @@ class Batch extends AbstractChainedBatch {
 	}
 }
 
-type GoToArgType = {
-	key: string,
-	cursor: CursorType,
-	txn: TransactionType,
-	dbi: DbiType,
-};
-const goTo = ({ cursor, txn, dbi }: GoToArgType) => {
-	const init = key => {
-		txn.putBoolean(dbi, key, true);
-		cursor.goToKey(key);
-	};
-
+const goTo = (cursor: CursorType) => {
 	const gt = key => {
-		const curr = cursor.goToKey(key);
-		if (!curr) {
-			init(key);
-			return cursor.goToNext();
-		}
-
-		return cursor.goToNext();
-	};
-	const gte = key => {
-		const curr = cursor.goToKey(key);
-		if (!curr) {
-			init(key);
-			return cursor.goToNext();
-		}
+		let curr = cursor.goToRange(key);
+		while (curr && curr <= key) curr = cursor.goToNext();
 
 		return curr;
 	};
-	const lt = key => {
-		const curr = cursor.goToKey(key);
-		if (!curr) {
-			init(key);
-			return cursor.goToPrev();
-		}
 
-		return cursor.goToPrev();
+	const gte = key => {
+		let curr = cursor.goToRange(key);
+		while (curr && curr < key) curr = cursor.goToNext();
+
+		return curr;
 	};
+
+	const lt = key => {
+		let curr = cursor.goToRange(key);
+		while (curr && curr >= key) curr = cursor.goToPrev();
+
+		return curr;
+	};
+
 	const lte = key => {
-		const curr = cursor.goToKey(key);
-		if (!curr) {
-			init(key);
-			return cursor.goToPrev();
-		}
+		let curr = cursor.goToRange(key);
+		while (curr && curr > key) curr = cursor.goToPrev();
 
 		return curr;
 	};
@@ -190,16 +170,11 @@ const goTo = ({ cursor, txn, dbi }: GoToArgType) => {
 	};
 };
 
-type InitializeCursorContextType = {
-	cursor: CursorType,
-	txn: TransactionType,
-	dbi: DbiType,
-};
 const initializeCursor = (
 	{ gt, gte, lt, lte, reverse }: IteratorOptionsType,
-	{ cursor, txn, dbi }: InitializeCursorContextType
+	cursor: CursorType
 ) => {
-	const boundGoto = goTo({ cursor, txn, dbi });
+	const boundGoto = goTo(cursor);
 	const invalid = (a: string, b: string) =>
 		`${a} can not be provided with ${b}`;
 
@@ -283,9 +258,9 @@ class Iterator extends AbstractIterator {
 		super(db);
 		this.env = env;
 		this.options = options;
-		const txn = (this.txn = env.beginTxn());
+		const txn = (this.txn = env.beginTxn({ readOnly: true }));
 		const cursor = (this.cursor = new Cursor(txn, dbi, {}));
-		this.curr = initializeCursor(options, { cursor, dbi, txn });
+		this.curr = initializeCursor(options, cursor);
 		this.count = 0;
 	}
 
