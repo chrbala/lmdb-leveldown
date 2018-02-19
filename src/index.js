@@ -190,14 +190,14 @@ const goTo = ({ cursor, txn, dbi }: GoToArgType) => {
 	};
 };
 
-type initializeCursorContextType = {
+type InitializeCursorContextType = {
 	cursor: CursorType,
 	txn: TransactionType,
 	dbi: DbiType,
 };
 const initializeCursor = (
 	{ gt, gte, lt, lte, reverse }: IteratorOptionsType,
-	{ cursor, txn, dbi }: initializeCursorContextType
+	{ cursor, txn, dbi }: InitializeCursorContextType
 ) => {
 	const boundGoto = goTo({ cursor, txn, dbi });
 	const invalid = (a: string, b: string) =>
@@ -298,7 +298,7 @@ class Iterator extends AbstractIterator {
 		} = this;
 		const { count } = this;
 		if (curr) {
-			const { key, value } = await new Promise((resolve, reject) => {
+			const { key, value } = await new Promise(resolve => {
 				cursor.getCurrentBinary((k, v) => resolve({ key: k, value: v }));
 			});
 
@@ -412,7 +412,7 @@ class LevelDOWN extends AbstractLevelDOWN {
 
 	_get(key: KeyType, { asBuffer }: OptionsType, callback: CallbackType) {
 		const { env, dbi } = this;
-		const txn: TransactionType = env.beginTxn();
+		const txn: TransactionType = env.beginTxn({ readOnly: true });
 		const maybeBuffer = txn.getBinary(dbi, key, {
 			keyIsBuffer: Buffer.isBuffer(key),
 		});
