@@ -190,14 +190,14 @@ const goTo = ({ cursor, txn, dbi }: GoToArgType) => {
 	};
 };
 
-type GetInitialCurrentValueContextType = {
+type initializeCursorContextType = {
 	cursor: CursorType,
 	txn: TransactionType,
 	dbi: DbiType,
 };
-const getInitialCurrentValue = (
+const initializeCursor = (
 	{ gt, gte, lt, lte, reverse }: IteratorOptionsType,
-	{ cursor, txn, dbi }: GetInitialCurrentValueContextType
+	{ cursor, txn, dbi }: initializeCursorContextType
 ) => {
 	const boundGoto = goTo({ cursor, txn, dbi });
 	const invalid = (a: string, b: string) =>
@@ -285,7 +285,7 @@ class Iterator extends AbstractIterator {
 		this.options = options;
 		const txn = (this.txn = env.beginTxn());
 		const cursor = (this.cursor = new Cursor(txn, dbi, {}));
-		this.curr = getInitialCurrentValue(options, { cursor, dbi, txn });
+		this.curr = initializeCursor(options, { cursor, dbi, txn });
 		this.count = 0;
 	}
 
