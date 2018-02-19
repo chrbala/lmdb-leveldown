@@ -68,41 +68,32 @@ type PutArgType = {
 	callback: CallbackType,
 };
 const commit = ({ env, dbi, ops, callback }: PutArgType) => {
-	let _txn: ?TransactionType;
-	try {
-		const txn = (_txn = env.beginTxn());
-		ops.forEach(op => {
-			if (op.type === PUT) {
-				const { key, value } = op;
-				const putValue =
-					typeof value === 'string'
-						? txn.putString
-						: typeof value === 'number'
-							? txn.putNumber
-							: typeof value === 'boolean'
-								? txn.putBoolean
-								: // eslint-disable-next-line max-params
-								function(d, k, _, options) {
-									this.putBinary(d, k, serialize(value), options);
-								};
-				putValue.call(txn, dbi, key, value, {
-					keyIsBuffer: Buffer.isBuffer(key),
-				});
-			} else if (op.type === DELETE) {
-				const { key } = op;
-				if (txn.getBinary(dbi, key) !== null)
-					txn.del(dbi, key, { keyIsBuffer: Buffer.isBuffer(key) });
-			}
-		});
-		txn.commit();
-		env.sync(e => (e ? callback(new Error(e)) : callback()));
-	} catch (e) {
-		if (_txn)
-			try {
-				_txn.abort();
-			} catch (error) {}
-		process.nextTick(() => callback(new Error(e)));
-	}
+	const txn = env.beginTxn();
+	ops.forEach(op => {
+		if (op.type === PUT) {
+			const { key, value } = op;
+			const putValue =
+				typeof value === 'string'
+					? txn.putString
+					: typeof value === 'number'
+						? txn.putNumber
+						: typeof value === 'boolean'
+							? txn.putBoolean
+							: // eslint-disable-next-line max-params
+							function(d, k, _, options) {
+								this.putBinary(d, k, serialize(value), options);
+							};
+			putValue.call(txn, dbi, key, value, {
+				keyIsBuffer: Buffer.isBuffer(key),
+			});
+		} else if (op.type === DELETE) {
+			const { key } = op;
+			if (txn.getBinary(dbi, key) !== null)
+				txn.del(dbi, key, { keyIsBuffer: Buffer.isBuffer(key) });
+		}
+	});
+	txn.commit();
+	env.sync(e => (e ? callback(new Error(e)) : callback()));
 };
 
 class Batch extends AbstractChainedBatch {
@@ -143,51 +134,35 @@ class Batch extends AbstractChainedBatch {
 	}
 }
 
-type GoToArgType = {
-	key: string,
-	cursor: CursorType,
-	txn: TransactionType,
-	dbi: DbiType,
-};
-const goTo = ({ key, cursor, txn, dbi }: GoToArgType) => {
-	const init = () => {
-		txn.putBoolean(dbi, key, true);
-		cursor.goToKey(key);
-	};
-
-	const gt = () => {
-		const curr = cursor.goToKey(key);
-		if (!curr) {
-			init();
-			return cursor.goToNext();
-		}
-
-		return cursor.goToNext();
-	};
-	const gte = () => {
-		const curr = cursor.goToKey(key);
-		if (!curr) {
-			init();
-			return cursor.goToNext();
-		}
+const goTo = (cursor: CursorType) => {
+	const gt = key => {
+		let curr = cursor.goToRange(key);
+		if (curr === null) cursor.goToFirst();
+		while (curr && curr <= key) curr = cursor.goToNext();
 
 		return curr;
 	};
-	const lt = () => {
-		const curr = cursor.goToKey(key);
-		if (!curr) {
-			init();
-			return cursor.goToPrev();
-		}
 
-		return cursor.goToPrev();
+	const gte = key => {
+		let curr = cursor.goToRange(key);
+		if (curr === null) cursor.goToFirst();
+		while (curr && curr < key) curr = cursor.goToNext();
+
+		return curr;
 	};
-	const lte = () => {
-		const curr = cursor.goToKey(key);
-		if (!curr) {
-			init();
-			return cursor.goToPrev();
-		}
+
+	const lt = key => {
+		let curr = cursor.goToRange(key);
+		if (curr === null) curr = cursor.goToLast();
+		while (curr && curr >= key) curr = cursor.goToPrev();
+
+		return curr;
+	};
+
+	const lte = key => {
+		let curr = cursor.goToRange(key);
+		if (curr === null) curr = cursor.goToLast();
+		while (curr && curr > key) curr = cursor.goToPrev();
 
 		return curr;
 	};
@@ -199,16 +174,11 @@ const goTo = ({ key, cursor, txn, dbi }: GoToArgType) => {
 	};
 };
 
-type GetInitialCurrentValueContextType = {
-	cursor: CursorType,
-	txn: TransactionType,
-	dbi: DbiType,
-};
-const getInitialCurrentValue = (
+const initializeCursor = (
 	{ gt, gte, lt, lte, reverse }: IteratorOptionsType,
-	{ cursor, txn, dbi }: GetInitialCurrentValueContextType
+	cursor: CursorType
 ) => {
-	const boundGoto = key => goTo({ key, cursor, txn, dbi });
+	const boundGoto = goTo(cursor);
 	const invalid = (a: string, b: string) =>
 		`${a} can not be provided with ${b}`;
 
@@ -217,18 +187,16 @@ const getInitialCurrentValue = (
 
 	return gt
 		? reverse
-			? lt ? boundGoto(lt).lt() : lte ? boundGoto(lte).lte() : cursor.goToLast()
-			: boundGoto(gt).gt()
+			? lt ? boundGoto.lt(lt) : lte ? boundGoto.lte(lte) : cursor.goToLast()
+			: boundGoto.gt(gt)
 		: gte
 			? reverse
-				? lt
-					? boundGoto(lt).lt()
-					: lte ? boundGoto(lte).lte() : cursor.goToLast()
-				: boundGoto(gte).gte()
+				? lt ? boundGoto.lt(lt) : lte ? boundGoto.lte(lte) : cursor.goToLast()
+				: boundGoto.gte(gte)
 			: lt
-				? reverse ? boundGoto(lt).lt() : cursor.goToFirst()
+				? reverse ? boundGoto.lt(lt) : cursor.goToFirst()
 				: lte
-					? reverse ? boundGoto(lte).lte() : cursor.goToFirst()
+					? reverse ? boundGoto.lte(lte) : cursor.goToFirst()
 					: reverse ? cursor.goToLast() : cursor.goToFirst();
 };
 
@@ -294,9 +262,9 @@ class Iterator extends AbstractIterator {
 		super(db);
 		this.env = env;
 		this.options = options;
-		const txn = (this.txn = env.beginTxn());
+		const txn = (this.txn = env.beginTxn({ readOnly: true }));
 		const cursor = (this.cursor = new Cursor(txn, dbi, {}));
-		this.curr = getInitialCurrentValue(options, { cursor, dbi, txn });
+		this.curr = initializeCursor(options, cursor);
 		this.count = 0;
 	}
 
@@ -307,49 +275,34 @@ class Iterator extends AbstractIterator {
 			options,
 			options: { reverse, keyAsBuffer, valueAsBuffer },
 		} = this;
-		try {
-			const { count } = this;
-			if (curr) {
-				const { key, value } = await new Promise((resolve, reject) => {
-					try {
-						cursor.getCurrentBinary((k, v) => resolve({ key: k, value: v }));
-					} catch (e) {
-						reject(new Error(e));
-					}
+		const { count } = this;
+		if (curr) {
+			const { key, value } = await new Promise(resolve => {
+				cursor.getCurrentBinary((k, v) => resolve({ key: k, value: v }));
+			});
+
+			this.curr = reverse ? cursor.goToPrev() : cursor.goToNext();
+
+			const wrapKey = k => (keyAsBuffer ? Buffer.from(k) : k);
+			const wrapValue = v => (valueAsBuffer ? Buffer.from(v) : v);
+			if (hasMore({ options, key: deserialize(key), count }))
+				process.nextTick(() => {
+					this.count++;
+					callback(
+						null,
+						wrapKey(deserialize(key)),
+						wrapValue(deserialize(value))
+					);
 				});
-
-				this.curr = reverse ? cursor.goToPrev() : cursor.goToNext();
-
-				const wrapKey = k => (keyAsBuffer ? Buffer.from(k) : k);
-				const wrapValue = v => (valueAsBuffer ? Buffer.from(v) : v);
-				if (hasMore({ options, key: deserialize(key), count }))
-					process.nextTick(() => {
-						this.count++;
-						callback(
-							null,
-							wrapKey(deserialize(key)),
-							wrapValue(deserialize(value))
-						);
-					});
-				else process.nextTick(callback);
-			} else process.nextTick(callback);
-		} catch (e) {
-			process.nextTick(() => callback(new Error(e)));
-		}
+			else process.nextTick(callback);
+		} else process.nextTick(callback);
 	}
 
 	_end(callback: CallbackType) {
 		const { txn, env, cursor } = this;
-		try {
-			cursor.close();
-			txn.abort();
-			env.sync(e => (e ? callback(new Error(e)) : callback()));
-		} catch (e) {
-			try {
-				txn.abort();
-			} catch (error) {}
-			process.nextTick(() => callback(new Error(e)));
-		}
+		cursor.close();
+		txn.abort();
+		env.sync(e => (e ? callback(new Error(e)) : callback()));
 	}
 }
 
@@ -373,57 +326,50 @@ class LevelDOWN extends AbstractLevelDOWN {
 		}: OptionsType,
 		callback: CallbackType
 	) {
-		try {
-			const { path } = this;
+		const { path } = this;
+		const invalid = message =>
+			process.nextTick(() => callback(new Error(message)));
 
-			if (overrides.dbi && !overrides.env)
-				throw new Error('env must be supplied with dbi');
+		if (overrides.dbi && !overrides.env)
+			return invalid('env must be supplied with dbi');
 
-			if (errorIfExists && existsSync(path))
-				throw new Error('File already exists');
+		if (errorIfExists && existsSync(path))
+			return invalid('File already exists');
 
-			if (createIfMissing !== false) mkdirp.sync(path);
+		if (createIfMissing !== false) mkdirp.sync(path);
+		else if (!existsSync(path))
+			return invalid('file or directory does not exist');
 
-			const env = (this.env =
-				overrides.env ||
-				(() => {
-					const _env = new Env();
+		const env = (this.env =
+			overrides.env ||
+			(() => {
+				const _env = new Env();
 
-					_env.open({
-						mapSize: mapSize !== undefined ? mapSize : 2 * 1024 * 1024 * 1024,
-						maxDbs: 1,
-						path,
-					});
-
-					return _env;
-				})());
-
-			this.dbi =
-				env.dbi ||
-				env.openDbi({
-					name: dbiName,
-					create: createIfMissing !== false,
-					noMetaSync: true,
-					noSync: true,
+				_env.open({
+					mapSize: mapSize !== undefined ? mapSize : 2 * 1024 * 1024 * 1024,
+					maxDbs: 1,
+					path,
 				});
-			process.nextTick(callback);
-		} catch (e) {
-			const error = e.message.match(/(file|directory)/)
-				? Object.assign(e, { message: 'file or directory does not exist' })
-				: e;
-			process.nextTick(() => callback(new Error(error)));
-		}
+
+				return _env;
+			})());
+
+		this.dbi =
+			overrides.dbi ||
+			env.openDbi({
+				name: dbiName,
+				create: createIfMissing !== false,
+				noMetaSync: true,
+				noSync: true,
+			});
+		process.nextTick(callback);
 	}
 
 	_close(callback: CallbackType) {
-		try {
-			const { env, dbi } = this;
-			dbi.close();
-			env.close();
-			process.nextTick(callback);
-		} catch (e) {
-			process.nextTick(() => callback(new Error(e)));
-		}
+		const { env, dbi } = this;
+		dbi.close();
+		env.close();
+		process.nextTick(callback);
 	}
 
 	// eslint-disable-next-line max-params
@@ -445,28 +391,24 @@ class LevelDOWN extends AbstractLevelDOWN {
 
 	_get(key: KeyType, { asBuffer }: OptionsType, callback: CallbackType) {
 		const { env, dbi } = this;
-		const txn: TransactionType = env.beginTxn();
-		try {
-			const maybeBuffer = txn.getBinary(dbi, key, {
-				keyIsBuffer: Buffer.isBuffer(key),
-			});
+		const txn: TransactionType = env.beginTxn({ readOnly: true });
+		const maybeBuffer = txn.getBinary(dbi, key, {
+			keyIsBuffer: Buffer.isBuffer(key),
+		});
 
-			if (maybeBuffer === null) throw new Error('NotFound');
-			const buffer = maybeBuffer === undefined ? serialize('') : maybeBuffer;
-
-			const data = deserialize(buffer);
-			txn.commit();
-			env.sync(e => {
-				if (e) callback(new Error(e));
-				else callback(null, asBuffer ? Buffer.from(data) : data);
-			});
-		} catch (e) {
-			if (txn)
-				try {
-					txn.abort();
-				} catch (error) {}
-			process.nextTick(() => callback(new Error(e)));
+		if (maybeBuffer === null) {
+			txn.abort();
+			return process.nextTick(() => callback(new Error('NotFound')));
 		}
+
+		const buffer = maybeBuffer === undefined ? serialize('') : maybeBuffer;
+
+		const data = deserialize(buffer);
+		txn.commit();
+		env.sync(e => {
+			if (e) callback(new Error(e));
+			else callback(null, asBuffer ? Buffer.from(data) : data);
+		});
 	}
 
 	_del(key: KeyType, options: OptionsType, callback: CallbackType) {
