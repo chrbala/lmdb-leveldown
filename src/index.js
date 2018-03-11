@@ -351,7 +351,7 @@ class LevelDOWN extends AbstractLevelDOWN {
 			})());
 
 		this.dbi =
-			env.dbi ||
+			overrides.dbi ||
 			env.openDbi({
 				name: dbiName,
 				create: createIfMissing !== false,
